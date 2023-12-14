@@ -1,0 +1,48 @@
+type Parser<'a> = string -> int -> ('a * int) list   //Parser (no libs used) MusaJ
+type Expr= |Num of int |Var of string |Add of Expr * Expr | Sub of Expr * Expr
+
+type ParserClass() =
+  member t.Bind( p: Parser<'a>, f: 'a->Parser<'b> ):Parser<'b> =
+    fun s n-> p s n |> List.collect( fun(a,m)->f a s m ) //str markers n_,m_
+
+  member t.Return a                   = (fun str pos-> [(a,pos)]): Parser<'a>
+  member t.ReturnFrom (p: Parser<'a>) = p
+  member t.Zero()                     = (fun _ _    -> []): Parser<'a>
+let parser = ParserClass()                            // parser { return .. }
+
+let numFct (str: string) = Num (int str)              //conversion to types
+let varFct               = Var
+let addOpFct             =function |"+"-> fun x y->Add(x,y) //match x w/|..
+                                   | _ -> fun x y->Sub(x,y)
+open System.Text.RegularExpressions
+let captureSingle (ma:Match) (n:int) = ma.Groups.[n].Captures.[0].Value
+
+let token (fct: string -> 'a) (reg: Regex) : Parser<'a> =
+    fun str pos-> let ma = reg.Match(str,pos)
+                  match ma.Success with |false-> []
+                                        |_-> let pos2 = pos + ma.Length
+                                             [(fct (captureSingle ma 1),pos2)]
+let addOpReg    = Regex @"\G\s*(\053|\055)"             // parser +,-
+let numReg      = Regex @"\G\s*((?:\053|-|)\s*[0-9]+)"  // Regular expressions
+let varReg      = Regex @"\G\s*([a-zA-Z][a-zA-Z0-9]*)"
+let num     = token numFct      numReg                  // Token parsers
+let var     = token varFct      varReg
+let addOp   = token addOpFct    addOpReg
+let ( <|> ) (p:Parser<'a>) (q:Parser<'a>)= (fun s n->(p s n)@(q s n)): Parser<'a>
+let numOrVar=num <|> var
+let rec infixR op q p = q <|> parser{ let! a = p
+                                      let! f = op
+                                      let! b = p |> infixR op q
+                                      return f a b}
+let psR = var |> infixR addOp var
+printfn "%A" (psR "a - b + c" 0 )
+//[(Var "a", 1); (Sub (Var "a", Var "b"), 5); (Sub (Var "a", Add (Var "b", Var "c")), 9)]
+let rec infixL op q p = p <|> parser{ let! a = p
+                                      let! f = op
+                                      let! b = q
+                                      let a1 = f a b 
+                                      let p1 = parser { return a1 }
+                                      return! p1 |> infixL op q }
+let psL = infixL addOp numOrVar numOrVar    //|> infixL addOp numOrVar
+printfn "%A" ( psL "a - b + c" 0 )  
+//[(Var "a", 1); (Sub (Var "a", Var "b"), 5); (Add (Sub (Var "a", Var "b"), Var "c"), 9)]
